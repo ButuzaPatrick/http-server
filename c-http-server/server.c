@@ -11,7 +11,10 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    int server_fd = socket();
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    bind(server_fd, (struct sockaddr*)&address, sizeof(address));
+    listen(server_fd, 10);
+    int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &addrlen);
 
     // socket
     // bind
