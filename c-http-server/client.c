@@ -22,7 +22,9 @@ int main() {
     }
 
     // Send data
-    uint8_t type = 0;
+    // PING = 0
+    // GET = 1
+    uint8_t type = 1;
     uint16_t size = 6;
     char payload[] = "hello\n";
 
@@ -44,8 +46,14 @@ int main() {
     int bytes = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
     if (bytes > 0) {
         buffer[bytes] = '\0';
-        printf("Server replied: %s\n", buffer);
+        printf("REPLY: ");
+        for (int i = 0; i < sizeof(buffer); i++) {
+            printf("%02X ", (uint8_t)buffer[i]);
+        }
+        printf("\n");
     }
+
+    // NEED TO PARSE RESPONSES
 
     close(sockfd);
     return 0;

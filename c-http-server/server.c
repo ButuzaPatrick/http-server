@@ -4,12 +4,14 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 
-#define ROOT "C:/Users/butuz/Documents/Projects/http-server/http-server/c-http-server/files"
+#define FILES_ROOT "/workspaces/http-server/c-http-server/files/"
 #define SUCCESS 1
 #define FAIL 0
 #define MAX_BACKLOG 100
 #define MAX_PAYLOAD 1024
+#define MAX_PATH 128
 #define IP_ADDRESS "127.0.0.1"
 #define PORT 8080
 
@@ -17,15 +19,26 @@
 #define PING 0
 #define GET 1
 
+#define FAIL_GET_FILEPATH -1
+#define FILE_ACCESS_FAIL -2
+#define FAIL_GET_FD -3
+
 typedef struct {
     uint8_t type;
     uint16_t size;
     char payload[MAX_PAYLOAD];
 } Request;
 
+typedef struct {
+    uint8_t type;
+    uint16_t size;
+    char payload[MAX_PAYLOAD];
+} Response;
+
 Request parse_request(char *content, uint16_t len_content);
 Request invalid_request();
-char* gen_response(Request request);
+void gen_response(Request request, Response* response);
+char invalid_file();
 
 int main(int argc, char *argv[]) {
     if (argc < 2 || strcmp(argv[1], "run") != 0) {
@@ -86,11 +99,6 @@ int main(int argc, char *argv[]) {
             buffer[bytes] = '\0';
 
             Request request;
-            printf("MESSAGE: ");
-            for (int i = 0; i < 9; i++) {
-                printf("%02X ", (uint8_t)buffer[i]);
-            }
-            printf("\n");
             request = parse_request(buffer, bytes);
 
             if (request.size > 0) {
@@ -104,9 +112,37 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            char* response = gen_response(request);
+            Response response;
+            response.type = 0;
+            response.size = 0;
+            response.payload[0] = '\0';
+            Response* response_ptr = &response;
+            gen_response(request, response_ptr);
 
-            send(client_sock, response, strlen(response), 0);
+            if (response.type == FAIL_GET_FILEPATH || response.type == FILE_ACCESS_FAIL || response.type == FAIL_GET_FD) {
+                printf("Failed to get filepath/open file\n");
+                close(client_sock);
+                continue;
+            }
+            
+            printf("RETURN MESSAGE:\n");
+            printf("TYPE: %d\n", response.type);
+            printf("SIZE: %d\n", response.size);
+            printf("PAYLOAD: %s\n", response.payload);
+
+            char* return_msg = malloc(response.size + 3);  
+            return_msg[0] = response.type;
+            memcpy(return_msg + 1, &response.size, 2);
+            memcpy(return_msg + 3, response.payload, response.size);
+
+            printf("RETURNING_MESSAGE: ");
+            for (int i = 0; i < response.size + 3; i++) {
+                printf("%02X ", (uint8_t)return_msg[i]);
+            }
+            printf("\n");
+            printf("Strlen_msg: %d\n", response.size + 3);
+
+            send(client_sock, return_msg, response.size + 3, 0);
         }
 
         close(client_sock);
@@ -166,9 +202,53 @@ Request invalid_request() {
     return invalid_request;
 }
 
-char* gen_response(Request request) {
+void gen_response(Request request, Response* response) {
     if (request.type == PING) {
-        char* response = "hey digga\n";
-        return response;
+        char* ping_msg = "you pinged the server\n\0";
+        strncpy(response->payload, ping_msg, MAX_PAYLOAD - 1);
+        response->size = strlen(response->payload);
+    } else if (request.type == GET) {
+        char file_path[MAX_PATH];
+        snprintf(file_path, sizeof(file_path), "%s%s", FILES_ROOT, request.payload);
+        printf("FILEPATH_REQUESTED: %s\n", file_path);
+
+        int file_fd = open(file_path, O_RDONLY | __O_CLOEXEC);
+
+        if (file_fd < 0) {
+            printf("Failed to get fd\n");
+            response->type = FAIL_GET_FD;
+            response->payload[0] = invalid_file();
+            return;
+        }
+
+        if (access(file_fd, R_OK) != 0) {
+            response->type = FILE_ACCESS_FAIL;
+            response->payload[0] = invalid_file();
+            return;
+        }
+
+        char buffer[MAX_PAYLOAD];
+        int n;
+        while (n = (read(file_fd, buffer, MAX_PAYLOAD - 1)) > 0) {
+            buffer[n] = '\0';
+            if (n == -1) {
+                printf("Invalid file path\n");
+                response->type = FAIL_GET_FILEPATH;
+                response->payload[0] = invalid_file();
+                return;
+            }
+            if (close(file_fd) < 0) {
+                printf("Failed to close file\n");
+                response->payload[0] = invalid_file();
+                return;
+            }
+            printf("FILE BUFFER: %s\n", buffer);
+        }
+        
+        strcpy(response->payload, buffer);
     }
+}
+
+char invalid_file() {
+    return '\0';
 }
