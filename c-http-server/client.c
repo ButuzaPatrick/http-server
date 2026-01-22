@@ -25,21 +25,21 @@ int main() {
     // PING = 0
     // GET = 1
     uint8_t type = 1;
-    uint16_t size = 6;
-    char payload[] = "hello\n";
+    uint16_t size = 8;
+    char payload[] = "hey.txt\0";
 
-    char msg[9];
+    char msg[11];
     msg[0] = type;
     memcpy(msg + 1, &size, 2);
-    memcpy(msg + 3, payload, 6);
+    memcpy(msg + 3, payload, 8);
 
     printf("MESSAGE: ");
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 11; i++) {
         printf("%02X ", (uint8_t)msg[i]);
     }
     printf("\n");
 
-    send(sockfd, msg, 9, 0);
+    send(sockfd, msg, 11, 0);
 
     // Receive response
     char buffer[1024];

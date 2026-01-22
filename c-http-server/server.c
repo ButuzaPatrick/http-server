@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #define FILES_ROOT "/workspaces/http-server/c-http-server/files/"
 #define SUCCESS 1
@@ -22,6 +23,7 @@
 #define FAIL_GET_FILEPATH -1
 #define FILE_ACCESS_FAIL -2
 #define FAIL_GET_FD -3
+#define FAIL_LONG_FILEPATH -4
 
 typedef struct {
     uint8_t type;
@@ -119,7 +121,7 @@ int main(int argc, char *argv[]) {
             Response* response_ptr = &response;
             gen_response(request, response_ptr);
 
-            if (response.type == FAIL_GET_FILEPATH || response.type == FILE_ACCESS_FAIL || response.type == FAIL_GET_FD) {
+            if (response.type == FAIL_GET_FILEPATH || response.type == FILE_ACCESS_FAIL || response.type == FAIL_GET_FD || response.type == FAIL_LONG_FILEPATH) {
                 printf("Failed to get filepath/open file\n");
                 close(client_sock);
                 continue;
@@ -205,12 +207,27 @@ Request invalid_request() {
 void gen_response(Request request, Response* response) {
     if (request.type == PING) {
         char* ping_msg = "you pinged the server\n\0";
-        strncpy(response->payload, ping_msg, MAX_PAYLOAD - 1);
+        strncpy(response->payload, ping_msg, sizeof(response->payload) - 1);
         response->size = strlen(response->payload);
     } else if (request.type == GET) {
+        if (request.size > MAX_PATH) {
+            printf("Path too long\n");
+            response->type = FAIL_LONG_FILEPATH;
+            response->payload[0] = invalid_file();
+            return;
+        }
+
         char file_path[MAX_PATH];
+        char* cwd = getcwd(file_path, sizeof(file_path));
+        printf("CWD: %s\n", cwd);
         snprintf(file_path, sizeof(file_path), "%s%s", FILES_ROOT, request.payload);
-        printf("FILEPATH_REQUESTED: %s\n", file_path);
+
+        if (access(file_path, R_OK) != 0) {
+            printf("Failed to access file '%s': %s\n", file_path, strerror(errno));
+            response->type = FILE_ACCESS_FAIL;
+            response->payload[0] = invalid_file();
+            return;
+        }
 
         int file_fd = open(file_path, O_RDONLY | __O_CLOEXEC);
 
@@ -221,30 +238,27 @@ void gen_response(Request request, Response* response) {
             return;
         }
 
-        if (access(file_fd, R_OK) != 0) {
-            response->type = FILE_ACCESS_FAIL;
-            response->payload[0] = invalid_file();
-            return;
-        }
-
         char buffer[MAX_PAYLOAD];
         int n;
-        while (n = (read(file_fd, buffer, MAX_PAYLOAD - 1)) > 0) {
+        while ((n = read(file_fd, buffer, MAX_PAYLOAD - 1)) > 0) {
             buffer[n] = '\0';
             if (n == -1) {
                 printf("Invalid file path\n");
                 response->type = FAIL_GET_FILEPATH;
                 response->payload[0] = invalid_file();
+                close(file_fd);
                 return;
             }
             if (close(file_fd) < 0) {
                 printf("Failed to close file\n");
                 response->payload[0] = invalid_file();
+                close(file_fd);
                 return;
             }
-            printf("FILE BUFFER: %s\n", buffer);
         }
-        
+        close(file_fd);
+        response->type = GET;
+        response->size = sizeof(buffer);
         strcpy(response->payload, buffer);
     }
 }
